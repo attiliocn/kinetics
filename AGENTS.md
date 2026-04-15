@@ -63,9 +63,9 @@ Refactor the microkinetics notebook into modular Python packages with a clean no
 ```
 For each iteration n in [1, n_samples]:
   1. Sample A ~ N(0, sigma)
-  2. Sample x ~ U(0, 1), compute B = A * x
+  2. For each transition state j, sample x_j ~ U(0, 1), compute B_j = A * x_j
   3. For each intermediate: perturbed_energy = energy + A
-  4. For each transition state: perturbed_energy = energy + B
+  4. For each transition state j: perturbed_energy_j = energy_j + B_j
   5. Run full pipeline (energies → mechanism → ... → simulation)
   6. Store trajectory and any metrics
 ```
@@ -416,6 +416,12 @@ Phase 3 (Analysis):
 - Added export of all sampled trajectories to CSV for each reaction
 - Added tracking/export of per-sample perturbed mechanism energies for cross-checking (`*_mode2_perturbed_energies.csv`)
 - Kept sample metadata export with A, x, and B for auditability
+
+**Date: Apr 15, 2026 (Perturbation Logic Update)**
+- Fixed perturbation bug: x is now sampled per transition-state label (x_j), not shared across all transition states
+- Transition-state perturbations now apply label-wise B_j = A * x_j within each sample
+- Updated samples metadata schema to include per-label fields (`x_<ts_label>`, `B_<ts_label>`) plus summary fields (`x_mean`, `B_mean`)
+- This change modifies runtime outputs in Mode 2 sample metadata and perturbed energies consistency checks
 
 **Date: Apr 7, 2026 (Scope Decision)**
 - Phase 3 (comparison/sensitivity) will not be implemented in this workstream

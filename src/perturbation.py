@@ -24,10 +24,10 @@ def perturb_energies(
 
     Sampling logic:
     1. A ~ N(0, sigma)
-    2. x ~ U(0, 1)
-    3. B = A * x
+    2. For each transition-state label j, sample x_j ~ U(0, 1)
+    3. For each transition-state label j, compute B_j = A * x_j
     4. intermediate labels receive +A
-    5. transition-state labels receive +B
+    5. each transition-state label j receives +B_j
 
     Args:
         energies: Baseline mechanism energies indexed by step label.
@@ -38,7 +38,8 @@ def perturb_energies(
             (defaults to config.TRANSITION_STATES_LABELS).
 
     Returns:
-        A tuple (perturbed_energies, sample_info).
+        A tuple (perturbed_energies, sample_info), where sample_info contains
+        scalar values plus per-transition-state x_j/B_j fields.
     """
     intermediates = list(config.INTERMEDIATES if intermediates is None else intermediates)
     transition_states = list(
@@ -48,23 +49,36 @@ def perturb_energies(
     perturbed = energies.copy()
 
     a_sample = float(rng.normal(0.0, sigma))
-    x_sample = float(rng.uniform(0.0, 1.0))
-    b_sample = a_sample * x_sample
 
     intermediate_idx = [label for label in intermediates if label in perturbed.index]
     transition_state_idx = [label for label in transition_states if label in perturbed.index]
 
+    x_by_ts: dict[str, float] = {
+        label: float(rng.uniform(0.0, 1.0)) for label in transition_state_idx
+    }
+    b_by_ts: dict[str, float] = {label: a_sample * x_val for label, x_val in x_by_ts.items()}
+
     if intermediate_idx:
         perturbed.loc[intermediate_idx] = perturbed.loc[intermediate_idx] + a_sample
-    if transition_state_idx:
-        perturbed.loc[transition_state_idx] = perturbed.loc[transition_state_idx] + b_sample
+
+    for label in transition_state_idx:
+        perturbed.loc[label] = perturbed.loc[label] + b_by_ts[label]
+
+    x_values = list(x_by_ts.values())
+    b_values = list(b_by_ts.values())
+
+    # Flatten per-label perturbation factors to CSV-friendly metadata columns.
+    x_fields = {f"x_{label}": x_val for label, x_val in x_by_ts.items()}
+    b_fields = {f"B_{label}": b_val for label, b_val in b_by_ts.items()}
 
     sample_info = {
         "A": a_sample,
-        "x": x_sample,
-        "B": b_sample,
+        "x_mean": float(np.mean(x_values)) if x_values else float("nan"),
+        "B_mean": float(np.mean(b_values)) if b_values else float("nan"),
         "n_intermediates_applied": float(len(intermediate_idx)),
         "n_transition_states_applied": float(len(transition_state_idx)),
+        **x_fields,
+        **b_fields,
     }
     return perturbed, sample_info
 
