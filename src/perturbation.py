@@ -162,9 +162,13 @@ def run_reaction_pipeline_mode2(
     The provided `run_single_pipeline` callable must execute the full
     deterministic pipeline for one energy series and return a trajectory
     DataFrame with a `time` column and one column per species.
+
+    This function always executes one unperturbed baseline run first, then
+    executes `n_samples` perturbed runs. Therefore total runs are
+    `n_samples + 1`.
     """
-    if n_samples <= 0:
-        raise ValueError("n_samples must be > 0")
+    if n_samples < 0:
+        raise ValueError("n_samples must be >= 0")
     if sigma < 0:
         raise ValueError("sigma must be >= 0")
     if export_trajectories and (export_dir is None or reaction_label is None):
@@ -177,15 +181,29 @@ def run_reaction_pipeline_mode2(
     trajectories: list[pd.DataFrame] = []
     sample_rows: list[dict[str, float]] = []
     perturbed_rows: list[dict[str, Any]] = []
+    sample_ids: list[int] = []
 
-    for sample_idx in range(n_samples):
-        perturbed_energies, sample_info = perturb_energies(
-            baseline_energies,
-            sigma=sigma,
-            rng=rng,
-            intermediates=intermediates,
-            transition_states=transition_states,
-        )
+    for run_idx in range(n_samples + 1):
+        is_baseline = run_idx == 0
+        if is_baseline:
+            perturbed_energies = baseline_energies.copy()
+            sample_info = {
+                "A": 0.0,
+                "x_mean": float("nan"),
+                "B_mean": 0.0,
+                "n_intermediates_applied": 0.0,
+                "n_transition_states_applied": 0.0,
+            }
+            sample_id = -1
+        else:
+            perturbed_energies, sample_info = perturb_energies(
+                baseline_energies,
+                sigma=sigma,
+                rng=rng,
+                intermediates=intermediates,
+                transition_states=transition_states,
+            )
+            sample_id = run_idx - 1
 
         trajectory = run_single_pipeline(perturbed_energies)
         if not isinstance(trajectory, pd.DataFrame):
@@ -196,10 +214,18 @@ def run_reaction_pipeline_mode2(
             raise ValueError("trajectory DataFrame must contain a 'time' column")
 
         trajectories.append(trajectory)
-        sample_rows.append({"sample": float(sample_idx), **sample_info})
+        sample_ids.append(sample_id)
+        sample_rows.append(
+            {
+                "sample": float(sample_id),
+                "is_baseline": float(is_baseline),
+                **sample_info,
+            }
+        )
         perturbed_rows.append(
             {
-                "sample": sample_idx,
+                "sample": sample_id,
+                "is_baseline": int(is_baseline),
                 **{label: float(value) for label, value in perturbed_energies.items()},
             }
         )
@@ -217,9 +243,10 @@ def run_reaction_pipeline_mode2(
         out_dir.mkdir(parents=True, exist_ok=True)
 
         trajectory_blocks: list[pd.DataFrame] = []
-        for sample_idx, traj in enumerate(trajectories):
+        for sample_id, traj in zip(sample_ids, trajectories, strict=True):
             block = traj.copy()
-            block.insert(0, "sample", sample_idx)
+            block.insert(0, "sample", sample_id)
+            block.insert(1, "is_baseline", int(sample_id == -1))
             block.insert(1, "reaction", reaction_label)
             trajectory_blocks.append(block)
 
@@ -234,7 +261,7 @@ def run_reaction_pipeline_mode2(
         perturbed_energies_df.to_csv(energies_out_path, index=False)
         result["perturbed_energies_export_path"] = str(energies_out_path)
 
-    if aggregate:
-        result["aggregate"] = aggregate_trajectories(trajectories)
+    if aggregate and n_samples > 0:
+        result["aggregate"] = aggregate_trajectories(trajectories[1:])
 
     return result
