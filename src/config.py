@@ -11,10 +11,10 @@ INTERMEDIATES = ['map', 'bis', 'a1', 'a2']
 TRANSITION_STATES = ['ts1', 'ts2']
 TRANSITION_STATES_LABELS = TRANSITION_STATES
 
-# Default initial concentrations (in mol/L)
+# Default initial concentrations (in mol/L)                          <<<< CHANGE HERE IF NECESSARY >>>>
 INITIAL_CONCENTRATIONS = {
     'bispyr': 0.1,
-    'roh': 0.1,
+    'roh': 0.2,
     'me2pyr': 0.0,
     'map': 0.0,
     'bis': 0.0,
@@ -27,22 +27,21 @@ ODE_SOLVER_OPTIONS = {
     'atol': 1e-12,
 }
 
-# Perturbation mode defaults
-PERTURBATION_SIGMA_DEFAULT = 2.0
+# Perturbation mode defaults                                         <<<< CHANGE HERE IF NECESSARY >>>>
+PERTURBATION_SIGMA_DEFAULT = 3.0
 PERTURBATION_SEED_DEFAULT = 42
 PERTURBATION_N_SAMPLES_DEFAULT = 1000
 PERTURBATION_PERCENTILES_DEFAULT = (5, 25, 50, 75, 95)
 
-# Barrier to rate constant calculation
+# Barrier to rate constant calculation                               <<<< CHANGE HERE IF NECESSARY >>>>
 # Temperature in Celsius
-TEMPERATURE_DEFAULT = 22
-
+TEMPERATURE_DEFAULT = 70
 
 # Rate threshold for accessibility check (s^-1)
 RATE_ACCESSIBILITY_THRESHOLD = 1e-10
 
-# Simulation defaults
-SIMULATION_TIME_DEFAULT = 3600 * 1  # n hours in seconds
+# Simulation defaults                                                <<<< CHANGE HERE IF NECESSARY >>>>
+SIMULATION_TIME_DEFAULT = 3600 * 12  # n hours in seconds
 TRAJECTORY_POINTS_DEFAULT = 1000
 TRAJECTORY_EXPONENT_DEFAULT = 3
 
