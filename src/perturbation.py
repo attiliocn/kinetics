@@ -8,6 +8,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from joblib import Parallel, delayed
 
 from . import config
 
@@ -263,5 +264,311 @@ def run_reaction_pipeline_mode2(
 
     if aggregate and n_samples > 0:
         result["aggregate"] = aggregate_trajectories(trajectories[1:])
+
+    return result
+
+
+def run_reaction_pipeline_mode2_parallel(
+    baseline_energies: pd.Series,
+    run_single_pipeline: Callable[[pd.Series], pd.DataFrame],
+    n_samples: int = config.PERTURBATION_N_SAMPLES_DEFAULT,
+    sigma: float = config.PERTURBATION_SIGMA_DEFAULT,
+    random_seed: int = config.PERTURBATION_SEED_DEFAULT,
+    intermediates: Sequence[str] | None = None,
+    transition_states: Sequence[str] | None = None,
+    aggregate: bool = True,
+    export_trajectories: bool = False,
+    export_dir: str | Path | None = None,
+    reaction_label: str | None = None,
+    n_jobs: int = -1,
+) -> dict[str, Any]:
+    """
+    Parallel version of run_reaction_pipeline_mode2.
+
+    Perturbations are generated sequentially in the same deterministic order
+    as the serial version, so outputs are identical. Only the ODE solves run
+    in parallel.
+
+    Args:
+        n_jobs: Number of parallel workers. -1 uses all available CPUs.
+    """
+    if n_samples < 0:
+        raise ValueError("n_samples must be >= 0")
+    if sigma < 0:
+        raise ValueError("sigma must be >= 0")
+    if export_trajectories and (export_dir is None or reaction_label is None):
+        raise ValueError(
+            "When export_trajectories=True, both export_dir and reaction_label are required"
+        )
+
+    rng = np.random.default_rng(random_seed)
+
+    # Phase 1: generate all perturbations sequentially — fast, preserves RNG order.
+    all_energies: list[pd.Series] = []
+    sample_rows: list[dict[str, float]] = []
+    perturbed_rows: list[dict[str, Any]] = []
+    sample_ids: list[int] = []
+
+    for run_idx in range(n_samples + 1):
+        is_baseline = run_idx == 0
+        if is_baseline:
+            perturbed_energies = baseline_energies.copy()
+            sample_info: dict[str, float] = {
+                "A": 0.0,
+                "x_mean": float("nan"),
+                "B_mean": 0.0,
+                "n_intermediates_applied": 0.0,
+                "n_transition_states_applied": 0.0,
+            }
+            sample_id = -1
+        else:
+            perturbed_energies, sample_info = perturb_energies(
+                baseline_energies,
+                sigma=sigma,
+                rng=rng,
+                intermediates=intermediates,
+                transition_states=transition_states,
+            )
+            sample_id = run_idx - 1
+
+        all_energies.append(perturbed_energies)
+        sample_ids.append(sample_id)
+        sample_rows.append(
+            {
+                "sample": float(sample_id),
+                "is_baseline": float(is_baseline),
+                **sample_info,
+            }
+        )
+        perturbed_rows.append(
+            {
+                "sample": sample_id,
+                "is_baseline": int(is_baseline),
+                **{label: float(value) for label, value in perturbed_energies.items()},
+            }
+        )
+
+    # Phase 2: ODE solves in parallel.
+    trajectories: list[pd.DataFrame] = Parallel(n_jobs=n_jobs)(
+        delayed(run_single_pipeline)(e) for e in all_energies
+    )
+
+    for trajectory in trajectories:
+        if not isinstance(trajectory, pd.DataFrame):
+            raise TypeError("run_single_pipeline must return a pandas DataFrame trajectory")
+        if "time" not in trajectory.columns:
+            raise ValueError("trajectory DataFrame must contain a 'time' column")
+
+    samples_df = pd.DataFrame(sample_rows)
+    perturbed_energies_df = pd.DataFrame(perturbed_rows)
+    result: dict[str, Any] = {
+        "trajectories": trajectories,
+        "samples": samples_df,
+        "perturbed_energies": perturbed_energies_df,
+    }
+
+    if export_trajectories:
+        out_dir = Path(export_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        trajectory_blocks: list[pd.DataFrame] = []
+        for sample_id, traj in zip(sample_ids, trajectories, strict=True):
+            block = traj.copy()
+            block.insert(0, "sample", sample_id)
+            block.insert(1, "is_baseline", int(sample_id == -1))
+            block.insert(1, "reaction", reaction_label)
+            trajectory_blocks.append(block)
+
+        trajectories_long = pd.concat(trajectory_blocks, ignore_index=True)
+        out_path = out_dir / f"{reaction_label}_mode2_trajectories.pkl.gz"
+        trajectories_long.to_pickle(out_path, compression="gzip")
+        result["trajectories_export_path"] = str(out_path)
+        result["trajectories_export_format"] = "pickle_gzip"
+
+        energies_out_path = out_dir / f"{reaction_label}_mode2_perturbed_energies.csv"
+        perturbed_energies_df.to_csv(energies_out_path, index=False)
+        result["perturbed_energies_export_path"] = str(energies_out_path)
+
+    if aggregate and n_samples > 0:
+        result["aggregate"] = aggregate_trajectories(trajectories[1:])
+
+    return result
+
+
+def _run_with_alarm(
+    fn: Callable[[pd.Series], pd.DataFrame],
+    energies: pd.Series,
+    timeout_seconds: int,
+) -> pd.DataFrame | None:
+    """Run fn(energies) with a SIGALRM wall-clock timeout. Linux/macOS only.
+
+    Returns None on timeout instead of raising.
+    Must be module-level to be picklable by joblib workers.
+    """
+    import signal as _signal
+
+    def _handler(signum, frame):
+        raise TimeoutError()
+
+    prev = _signal.signal(_signal.SIGALRM, _handler)
+    _signal.alarm(timeout_seconds)
+    try:
+        return fn(energies)
+    except TimeoutError:
+        return None
+    finally:
+        _signal.alarm(0)
+        _signal.signal(_signal.SIGALRM, prev)
+
+
+def run_reaction_pipeline_mode2_parallel2(
+    baseline_energies: pd.Series,
+    run_single_pipeline: Callable[[pd.Series], pd.DataFrame],
+    n_samples: int = config.PERTURBATION_N_SAMPLES_DEFAULT,
+    sigma: float = config.PERTURBATION_SIGMA_DEFAULT,
+    random_seed: int = config.PERTURBATION_SEED_DEFAULT,
+    intermediates: Sequence[str] | None = None,
+    transition_states: Sequence[str] | None = None,
+    aggregate: bool = True,
+    export_trajectories: bool = False,
+    export_dir: str | Path | None = None,
+    reaction_label: str | None = None,
+    n_jobs: int = -1,
+    job_timeout: int = 60,
+) -> dict[str, Any]:
+    """
+    Parallel version of run_reaction_pipeline_mode2 with per-job timeout.
+
+    Identical to run_reaction_pipeline_mode2_parallel except each ODE solve
+    is guarded by a per-job wall-clock timeout (SIGALRM; Linux/macOS only).
+    Jobs that exceed ``job_timeout`` are skipped — their slot in
+    ``result["trajectories"]`` is None.  Aggregate and export steps ignore
+    None entries automatically.
+
+    Extra keys in the returned dict:
+        timed_out   – list[int] of sample_ids whose solve was skipped.
+        n_timed_out – int count of skipped solves.
+
+    ``result["samples"]`` gains a ``timed_out`` boolean column.
+
+    Args:
+        job_timeout: Per-job wall-clock limit in seconds (default 300 = 5 min).
+        n_jobs: Number of parallel workers. -1 uses all available CPUs.
+    """
+    if n_samples < 0:
+        raise ValueError("n_samples must be >= 0")
+    if sigma < 0:
+        raise ValueError("sigma must be >= 0")
+    if job_timeout <= 0:
+        raise ValueError("job_timeout must be > 0")
+    if export_trajectories and (export_dir is None or reaction_label is None):
+        raise ValueError(
+            "When export_trajectories=True, both export_dir and reaction_label are required"
+        )
+
+    rng = np.random.default_rng(random_seed)
+
+    # Phase 1: generate all perturbations sequentially — fast, preserves RNG order.
+    all_energies: list[pd.Series] = []
+    sample_rows: list[dict[str, float]] = []
+    perturbed_rows: list[dict[str, Any]] = []
+    sample_ids: list[int] = []
+
+    for run_idx in range(n_samples + 1):
+        is_baseline = run_idx == 0
+        if is_baseline:
+            perturbed_energies = baseline_energies.copy()
+            sample_info: dict[str, float] = {
+                "A": 0.0,
+                "x_mean": float("nan"),
+                "B_mean": 0.0,
+                "n_intermediates_applied": 0.0,
+                "n_transition_states_applied": 0.0,
+            }
+            sample_id = -1
+        else:
+            perturbed_energies, sample_info = perturb_energies(
+                baseline_energies,
+                sigma=sigma,
+                rng=rng,
+                intermediates=intermediates,
+                transition_states=transition_states,
+            )
+            sample_id = run_idx - 1
+
+        all_energies.append(perturbed_energies)
+        sample_ids.append(sample_id)
+        sample_rows.append(
+            {
+                "sample": float(sample_id),
+                "is_baseline": float(is_baseline),
+                **sample_info,
+            }
+        )
+        perturbed_rows.append(
+            {
+                "sample": sample_id,
+                "is_baseline": int(is_baseline),
+                **{label: float(value) for label, value in perturbed_energies.items()},
+            }
+        )
+
+    # Phase 2: ODE solves in parallel, each guarded by SIGALRM.
+    raw: list[pd.DataFrame | None] = Parallel(n_jobs=n_jobs)(
+        delayed(_run_with_alarm)(run_single_pipeline, e, job_timeout) for e in all_energies
+    )
+
+    for traj, sid in zip(raw, sample_ids):
+        if traj is None:
+            continue
+        if not isinstance(traj, pd.DataFrame):
+            raise TypeError("run_single_pipeline must return a pandas DataFrame trajectory")
+        if "time" not in traj.columns:
+            raise ValueError("trajectory DataFrame must contain a 'time' column")
+
+    timed_out_ids = [sid for sid, traj in zip(sample_ids, raw) if traj is None]
+    timed_out_set = set(timed_out_ids)
+    for row, sid in zip(sample_rows, sample_ids):
+        row["timed_out"] = float(sid in timed_out_set)
+
+    samples_df = pd.DataFrame(sample_rows)
+    perturbed_energies_df = pd.DataFrame(perturbed_rows)
+    result: dict[str, Any] = {
+        "trajectories": raw,
+        "samples": samples_df,
+        "perturbed_energies": perturbed_energies_df,
+        "timed_out": timed_out_ids,
+        "n_timed_out": len(timed_out_ids),
+    }
+
+    if export_trajectories:
+        out_dir = Path(export_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        trajectory_blocks: list[pd.DataFrame] = []
+        for sample_id, traj in zip(sample_ids, raw, strict=True):
+            if traj is None:
+                continue
+            block = traj.copy()
+            block.insert(0, "sample", sample_id)
+            block.insert(1, "is_baseline", int(sample_id == -1))
+            block.insert(1, "reaction", reaction_label)
+            trajectory_blocks.append(block)
+
+        if trajectory_blocks:
+            trajectories_long = pd.concat(trajectory_blocks, ignore_index=True)
+            out_path = out_dir / f"{reaction_label}_mode2_trajectories.pkl.gz"
+            trajectories_long.to_pickle(out_path, compression="gzip")
+            result["trajectories_export_path"] = str(out_path)
+            result["trajectories_export_format"] = "pickle_gzip"
+
+        energies_out_path = out_dir / f"{reaction_label}_mode2_perturbed_energies.csv"
+        perturbed_energies_df.to_csv(energies_out_path, index=False)
+        result["perturbed_energies_export_path"] = str(energies_out_path)
+
+    if aggregate and n_samples > 0:
+        valid = [t for sid, t in zip(sample_ids, raw) if sid != -1 and t is not None]
+        if valid:
+            result["aggregate"] = aggregate_trajectories(valid)
 
     return result
