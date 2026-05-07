@@ -1,6 +1,7 @@
 # Ignore input / output files
 imports/*
 exports/*
+exports_persist/*
 
 # gitignore template for Jupyter Notebooks
 # website: http://jupyter.org/
