@@ -1,0 +1,1 @@
+perl-rename 's/_mode/-nochangeeq_mode/' exports/* && mv exports/* /home/attilio/projects/ufscar/ufscar.notebooks/microkinetics.pipeline/exports_persist/1M_STANDARD-STATE_thesis/validation_dft-opt
