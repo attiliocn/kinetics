@@ -33,7 +33,17 @@ Na biblioteca, as condições vêm dos padrões de `src/config.py`. O bloco `DFT
 | `SIMULATION_TIME_DEFAULT` | `3600 * 6` | `3600 * 6` | `3600 * 12` | `3600 * 12` |
 | `PERTURBATION_SIGMA_DEFAULT` | 3.0 | 3.0 | 3.0 | 3.0 |
 
-**Estado em 11/10/2026:** o `config.py` está na B2. O `main.ipynb` lê esses padrões na célula 4 (`TEMPERATURE_C`, `SIMULATION_TIME`, `INITIAL_CONCENTRATIONS`, `SIGMA`). Depois de editar o `config.py`, reinicie o *kernel* para que o módulo seja carregado de novo.
+Para trocar a condição sem editar vários valores manualmente, chame a função `configure_standard_condition()` no `src/config.py`:
+
+```python
+from src import config
+
+config.configure_standard_condition("A1")
+```
+
+Os identificadores aceitos são `"A1"`, `"B1"`, `"A2"` e `"B2"` (a função também aceita minúsculas). A chamada atualiza `INITIAL_CONCENTRATIONS`, `TEMPERATURE_DEFAULT`, `SIMULATION_TIME_DEFAULT` e `PERTURBATION_SIGMA_DEFAULT`; faça-a antes de copiar esses padrões para as variáveis da célula 4 do `main.ipynb`. Depois de alterar o módulo, reinicie o *kernel* para que ele seja carregado de novo.
+
+**Estado em 11/10/2026:** o `config.py` está na B2. O `main.ipynb` lê esses padrões na célula 4 (`TEMPERATURE_C`, `SIMULATION_TIME`, `INITIAL_CONCENTRATIONS`, `SIGMA`).
 
 ## 3. Como rodar cada condição
 

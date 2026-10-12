@@ -11,6 +11,38 @@ INTERMEDIATES = ['map', 'bis', 'a1', 'a2']
 TRANSITION_STATES = ['ts1', 'ts2']
 TRANSITION_STATES_LABELS = TRANSITION_STATES
 
+# Standard microkinetics conditions from the thesis protocol.
+STANDARD_CONDITIONS = {
+    'A1': {
+        'temperature': 25,
+        'simulation_time': 3600 * 6,
+        'bispyr': 0.01,
+        'roh': 0.01,
+        'sigma': 3.0,
+    },
+    'B1': {
+        'temperature': 25,
+        'simulation_time': 3600 * 6,
+        'bispyr': 0.01,
+        'roh': 0.02,
+        'sigma': 3.0,
+    },
+    'A2': {
+        'temperature': 70,
+        'simulation_time': 3600 * 12,
+        'bispyr': 0.1,
+        'roh': 0.1,
+        'sigma': 3.0,
+    },
+    'B2': {
+        'temperature': 70,
+        'simulation_time': 3600 * 12,
+        'bispyr': 0.1,
+        'roh': 0.2,
+        'sigma': 3.0,
+    },
+}
+
 # Default initial concentrations (in mol/L)                          <<<< CHANGE HERE IF NECESSARY >>>>
 INITIAL_CONCENTRATIONS = {
     'bispyr': 0.1,
@@ -55,3 +87,42 @@ BARRIER_COLUMN_MAPPING = {
 
 # Rate column order (matches entity order for ODE system)
 RATE_COLUMN_ORDER = ['k1d', 'k1r', 'k2d', 'k2r']
+
+
+def configure_standard_condition(condition):
+    """Apply one of the four standard microkinetics conditions.
+
+    Args:
+        condition (str): Condition identifier: ``A1``, ``B1``, ``A2`` or
+            ``B2``.
+
+    Raises:
+        TypeError: If ``condition`` is not a string.
+        ValueError: If ``condition`` is not a known standard condition.
+    """
+    global PERTURBATION_SIGMA_DEFAULT
+    global SIMULATION_TIME_DEFAULT
+    global TEMPERATURE_DEFAULT
+
+    if not isinstance(condition, str):
+        raise TypeError('condition must be a string')
+
+    condition = condition.upper()
+    if condition not in STANDARD_CONDITIONS:
+        valid_conditions = ', '.join(STANDARD_CONDITIONS)
+        raise ValueError(
+            f'Unknown standard condition {condition!r}; '
+            f'choose one of: {valid_conditions}'
+        )
+
+    settings = STANDARD_CONDITIONS[condition]
+    INITIAL_CONCENTRATIONS.update({
+        'bispyr': settings['bispyr'],
+        'roh': settings['roh'],
+        'me2pyr': 0.0,
+        'map': 0.0,
+        'bis': 0.0,
+    })
+    TEMPERATURE_DEFAULT = settings['temperature']
+    SIMULATION_TIME_DEFAULT = settings['simulation_time']
+    PERTURBATION_SIGMA_DEFAULT = settings['sigma']
