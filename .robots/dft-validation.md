@@ -2,6 +2,8 @@
 
 Contexto para rodar ou alterar a microcinética das reações publicadas calculadas em DFT (11/10/2026). Ver também `standard-state.md` nesta pasta.
 
+**12/10/2026:** a tentativa de rodar estas reações nas quatro condições padrão foi revertida. Os requisitos para refazer estão em `dft-standard-conditions.md`. A célula 5 força σ = 2 também para o conjunto xTB (§4 daquele arquivo).
+
 ---
 
 ## 1. O que é
